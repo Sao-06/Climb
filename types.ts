@@ -45,6 +45,7 @@ export interface UserProfile {
     hat: string;
     gear: string;
   };
+  isDistracted: boolean;
 }
 
 export interface AppUsage {
