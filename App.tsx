@@ -29,28 +29,93 @@ const App: React.FC = () => {
   });
 
   const distractionStartTime = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  // Synthesized Alarm Sound Effect (10 seconds)
+  const playAlarmSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = audioCtx;
+      
+      const duration = 10; // 10 seconds alarm
+      const now = audioCtx.currentTime;
+
+      // Create primary alarm tone
+      const osc = audioCtx.createOscillator();
+      const osc2 = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+      osc.type = 'triangle';
+      osc2.type = 'square';
+      
+      // Dual tone for urgency
+      osc.frequency.setValueAtTime(880, now); // A5
+      osc2.frequency.setValueAtTime(440, now); // A4
+
+      // Beeping pattern
+      for (let i = 0; i < duration * 2; i++) {
+        const time = now + i * 0.5;
+        // Beep on
+        gain.gain.setValueAtTime(0.3, time);
+        // Frequency shift for alarm "wail" effect
+        osc.frequency.exponentialRampToValueAtTime(1100, time + 0.2);
+        osc.frequency.exponentialRampToValueAtTime(880, time + 0.4);
+        // Beep off
+        gain.gain.setValueAtTime(0, time + 0.4);
+      }
+
+      osc.connect(gain);
+      osc2.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc.start(now);
+      osc2.start(now);
+      
+      osc.stop(now + duration);
+      osc2.stop(now + duration);
+      
+      // Ensure context is closed after 10s to free resources
+      setTimeout(() => {
+        if (audioCtx.state !== 'closed') {
+          audioCtx.close();
+        }
+      }, (duration + 1) * 1000);
+
+    } catch (e) {
+      console.warn("Audio context not supported or blocked", e);
+    }
+  };
+
+  const stopAlarm = () => {
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+  };
 
   // Distraction Monitoring Logic
-  // Since we can't monitor other apps directly, we use Tab Visibility as a proxy.
-  // If a focus session is active and the user leaves the tab (simulating social media use), they are distracted.
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden && isFocusSessionActive) {
-        // User left the tab - start tracking distraction
         setIsDistracted(true);
         distractionStartTime.current = Date.now();
       } else if (!document.hidden && isDistracted) {
-        // User returned to the tab
         if (distractionStartTime.current) {
           const elapsedMinutes = Math.floor((Date.now() - distractionStartTime.current) / 60000);
+          
+          // Trigger the 10-second alarm
+          playAlarmSound();
+          
           if (elapsedMinutes > 0) {
             updatePoints(-elapsedMinutes);
             setDistractionPointsLost(elapsedMinutes);
+          } else {
+            setDistractionPointsLost(1);
+            updatePoints(-1);
           }
-          // Reset distraction status
+          
           setIsDistracted(false);
           distractionStartTime.current = null;
-          // Redirect to focus mode as requested
           setActiveTab(AppTab.DASHBOARD);
         }
       }
@@ -60,19 +125,17 @@ const App: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [isFocusSessionActive, isDistracted]);
 
-  // Point deduction ticker for sustained distraction while the app is open (simulated)
   useEffect(() => {
     let interval: any;
     if (isDistracted) {
       interval = setInterval(() => {
         updatePoints(-1);
         setDistractionPointsLost(prev => prev + 1);
-      }, 60000); // 1 point per minute
+      }, 60000);
     }
     return () => clearInterval(interval);
   }, [isDistracted]);
 
-  // Calculate level based on points
   useEffect(() => {
     const newLevel = Math.max(1, Math.floor(user.points / 1000) + 1);
     if (newLevel !== user.level) {
@@ -107,6 +170,11 @@ const App: React.FC = () => {
     setUser(prev => ({ ...prev, selectedCharacter: type }));
   };
 
+  const closeOverlay = () => {
+    setDistractionPointsLost(0);
+    stopAlarm();
+  };
+
   const NavItem = ({ tab, label, icon }: { tab: AppTab, label: string, icon: string }) => (
     <button 
       onClick={() => setActiveTab(tab)}
@@ -125,17 +193,17 @@ const App: React.FC = () => {
       {/* Distraction Alert Overlay */}
       {distractionPointsLost > 0 && !isDistracted && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in zoom-in duration-300">
-          <div className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full text-center shadow-2xl border-4 border-red-100">
-            <div className="text-6xl mb-4">⚠️</div>
-            <h2 className="text-2xl font-black text-slate-800 mb-2 italic">EXPEDITION STALLED!</h2>
+          <div className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full text-center shadow-2xl border-4 border-red-500 ring-8 ring-red-500/20">
+            <div className="text-6xl mb-4 animate-ping">🚨</div>
+            <h2 className="text-2xl font-black text-slate-800 mb-2 italic uppercase">Expedition Alert!</h2>
             <p className="text-slate-500 mb-6 font-medium">
-              You wandered off the trail (Social Media detected). Your climber lost focus and you dropped <span className="text-red-600 font-black">-{distractionPointsLost} XP</span>.
+              The proximity alarm was triggered! Your climber lost footing and you dropped <span className="text-red-600 font-black">-{distractionPointsLost} XP</span>.
             </p>
             <button 
-              onClick={() => setDistractionPointsLost(0)}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-widest text-sm"
+              onClick={closeOverlay}
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-2xl shadow-[0_10px_30px_rgba(220,38,38,0.4)] transition-all active:scale-95 uppercase tracking-widest text-sm"
             >
-              RESUME CLIMB
+              SILENCE & RESUME
             </button>
           </div>
         </div>
@@ -210,10 +278,9 @@ const App: React.FC = () => {
               <CharacterSelect selected={user.selectedCharacter} onSelect={selectCharacter} />
             </div>
             
-            {/* Simulated App Monitoring Demo Control */}
             <div className="bg-amber-50 p-8 rounded-[2rem] shadow-inner border border-amber-100">
                <h3 className="text-xl font-black text-amber-800 mb-2">Guard System Demo</h3>
-               <p className="text-amber-700/70 text-sm mb-6">In a real mobile environment, we track unproductive app launches. In this browser demo, switching tabs or clicking "Simulate Social Media" while climbing will trigger the penalty.</p>
+               <p className="text-amber-700/70 text-sm mb-6">Switching tabs while climbing triggers the proximity alarm. Use this button to test the 10-second alarm and penalty system immediately.</p>
                <button 
                   onClick={() => {
                     if (!isFocusSessionActive) {
@@ -221,18 +288,18 @@ const App: React.FC = () => {
                       return;
                     }
                     setIsDistracted(true);
-                    distractionStartTime.current = Date.now() - 300000; // Pretend 5 mins passed
-                    // Re-trigger visibility logic manually for simulation
+                    distractionStartTime.current = Date.now() - 300000;
                     setTimeout(() => {
                       setIsDistracted(false);
+                      playAlarmSound();
                       updatePoints(-5);
                       setDistractionPointsLost(5);
                       setActiveTab(AppTab.DASHBOARD);
-                    }, 500);
+                    }, 100);
                   }}
                   className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-6 py-3 rounded-xl transition-all shadow-md active:scale-95"
                >
-                 SIMULATE SOCIAL MEDIA DISTRACTION
+                 SIMULATE ALARM TRIGGER
                </button>
             </div>
           </div>
