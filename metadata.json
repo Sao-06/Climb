@@ -1,0 +1,7 @@
+{
+  "name": "Climb: Productivity Ascent",
+  "description": "A gamified productivity tracker where your focus helps a character climb a mountain. Earn points for deep work and spend them on climber customizations.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
